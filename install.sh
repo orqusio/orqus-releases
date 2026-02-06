@@ -398,7 +398,7 @@ generate_cometbft_genesis() {
     cat > "${genesis_file}" << EOF
 {
   "genesis_time": "${genesis_time}",
-  "chain_id": "${CHAIN_NAME}",
+  "chain_id": "${CHAIN_ID}",
   "initial_height": "1",
   "consensus_params": {
     "block": {
