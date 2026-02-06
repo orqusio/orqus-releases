@@ -44,22 +44,50 @@ INSTALL_MODE=docker curl -sSL https://raw.githubusercontent.com/orqusio/orqus-re
 docker compose -f ~/.orqus/docker-compose.yml logs -f
 ```
 
+#### Upgrade Existing Installation
+
+To upgrade an existing installation to the latest version:
+
+```bash
+# Method 1: Use local install script (recommended)
+~/.orqus/install.sh upgrade
+
+# Method 2: Fetch latest installer and upgrade
+curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | bash -s -- upgrade
+```
+
+The upgrade process will:
+- Detect installation mode (binary or docker)
+- Stop running services
+- Download/pull latest binaries or Docker images
+- Restart services (Docker mode only)
+- Preserve all data and configuration
+
+**Note:** For binary mode, you need to manually restart after upgrade:
+```bash
+~/.orqus/start.sh
+```
+
 #### Join Existing Network
 
-To connect to an existing Orqus network (testnet/mainnet), specify the `PERSISTENT_PEERS`:
+To connect to an existing Orqus network (testnet/mainnet), specify both CometBFT and Reth peers:
 
 ```bash
 # Get node_id from existing sentry nodes
 # On sentry node: curl -s http://localhost:26657/status | jq -r '.result.node_info.id'
 
 # Install and connect to network
-PERSISTENT_PEERS="<node_id>@<sentry_ip>:26656,<node_id>@<sentry_ip>:26656" \
+PERSISTENT_PEERS="<node_id>@<sentry_ip>:26656" \
+RETH_TRUSTED_PEERS="enode://<pubkey>@<sentry_ip>:30303" \
   curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | bash
 ```
 
 Example:
 ```bash
+# CometBFT peers (for consensus)
 PERSISTENT_PEERS="a1b2c3d4e5@10.0.1.10:26656,f6g7h8i9j0@10.0.1.11:26656" \
+# Reth peers (for execution layer sync)
+RETH_TRUSTED_PEERS="enode://5a3d42...@10.0.1.10:30303,enode://59949a...@10.0.1.11:30303" \
   INSTALL_MODE=docker \
   curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | bash
 ```
@@ -95,6 +123,9 @@ NODE_TYPE=rpc
 # P2P configuration (for joining existing network)
 PERSISTENT_PEERS="node_id@ip:26656,node_id@ip:26656"
 SEEDS="node_id@seed:26656"
+
+# Reth P2P peers (for execution layer sync)
+RETH_TRUSTED_PEERS="enode://pubkey@ip:30303,enode://pubkey@ip:30303"
 
 # Custom ports
 RETH_HTTP_PORT=8545

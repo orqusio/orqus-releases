@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Orqus Chain - One-click Install & Start Script
+# Orqus Chain - One-click Install & Upgrade Script
 #
 # Usage:
 #   # Binary mode (default)
@@ -12,6 +12,11 @@
 #   # Connect to existing network (testnet/mainnet)
 #   PERSISTENT_PEERS="node_id@sentry1.orqus.io:26656,node_id@sentry2.orqus.io:26656" \
 #     curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | bash
+#
+#   # Upgrade existing installation
+#   ~/.orqus/install.sh upgrade
+#   # Or:
+#   curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | bash -s -- upgrade
 #
 # This script will:
 # 1. Download binaries OR pull Docker images
@@ -62,10 +67,14 @@ NODE_TYPE="${NODE_TYPE:-validator}"
 COMETBFT_VERSION="${COMETBFT_VERSION:-v0.38.15}"
 
 # P2P configuration
-# Format: "node_id@ip:port,node_id@ip:port"
+# CometBFT peers - Format: "node_id@ip:port,node_id@ip:port"
 # Example: PERSISTENT_PEERS="abc123@sentry-1.orqus.io:26656,def456@sentry-2.orqus.io:26656"
 PERSISTENT_PEERS="${PERSISTENT_PEERS:-}"
 SEEDS="${SEEDS:-}"
+
+# Reth P2P peers - Format: "enode://pubkey@ip:port,enode://pubkey@ip:port"
+# Example: RETH_TRUSTED_PEERS="enode://abc123...@10.0.1.10:30303,enode://def456...@10.0.1.11:30303"
+RETH_TRUSTED_PEERS="${RETH_TRUSTED_PEERS:-}"
 
 # Ports
 RETH_HTTP_PORT="${RETH_HTTP_PORT:-8545}"
@@ -187,6 +196,7 @@ services:
       --authrpc.jwtsecret /jwt.hex
       --port 30303
       --metrics 0.0.0.0:9001
+      ${RETH_TRUSTED_PEERS:+--trusted-peers ${RETH_TRUSTED_PEERS}}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8545"]
       interval: 10s
@@ -736,6 +746,10 @@ echo ""
 
 # Start orqus-reth
 echo "[1/3] Starting orqus-reth..."
+RETH_TRUSTED_PEERS_ARG=""
+if [ -n "${RETH_TRUSTED_PEERS}" ]; then
+    RETH_TRUSTED_PEERS_ARG="--trusted-peers ${RETH_TRUSTED_PEERS}"
+fi
 "${BIN_DIR}/orqus-reth" node \
     --datadir "${DATA_DIR}/reth" \
     --chain "${CONFIG_DIR}/reth-genesis.json" \
@@ -746,6 +760,7 @@ echo "[1/3] Starting orqus-reth..."
     --authrpc.jwtsecret "${CONFIG_DIR}/jwt.hex" \
     --port ${RETH_P2P_PORT} \
     --metrics 0.0.0.0:${RETH_METRICS_PORT} \
+    ${RETH_TRUSTED_PEERS_ARG} \
     > "${DATA_DIR}/logs/reth.log" 2>&1 &
 RETH_PID=$!
 echo "    PID: ${RETH_PID}"
@@ -828,6 +843,7 @@ export RETH_WS_PORT="${RETH_WS_PORT}"
 export RETH_ENGINE_PORT="${RETH_ENGINE_PORT}"
 export RETH_P2P_PORT="${RETH_P2P_PORT}"
 export RETH_METRICS_PORT="${RETH_METRICS_PORT}"
+export RETH_TRUSTED_PEERS="${RETH_TRUSTED_PEERS}"
 export COMETBFT_P2P_PORT="${COMETBFT_P2P_PORT}"
 export COMETBFT_RPC_PORT="${COMETBFT_RPC_PORT}"
 export ORQUSBFT_ABCI_PORT="${ORQUSBFT_ABCI_PORT}"
@@ -835,6 +851,128 @@ export ORQUSBFT_ABCI_PORT="${ORQUSBFT_ABCI_PORT}"
 # Add bin to PATH
 export PATH="\${BIN_DIR}:\${PATH}"
 EOF
+}
+
+# Upgrade existing installation
+do_upgrade() {
+    echo ""
+    echo "╔═══════════════════════════════════════════════════════════╗"
+    echo "║              Orqus Chain - Upgrade                        ║"
+    echo "╚═══════════════════════════════════════════════════════════╝"
+    echo ""
+
+    # Check if installation exists
+    if [ ! -d "${INSTALL_DIR}" ]; then
+        log_error "No existing installation found at ${INSTALL_DIR}"
+        log_error "Run install first (without 'upgrade' argument)"
+        exit 1
+    fi
+
+    # Load existing environment
+    if [ -f "${INSTALL_DIR}/env.sh" ]; then
+        source "${INSTALL_DIR}/env.sh"
+    fi
+
+    # Detect install mode from existing installation
+    if [ -f "${INSTALL_DIR}/docker-compose.yml" ]; then
+        INSTALL_MODE="docker"
+    else
+        INSTALL_MODE="binary"
+    fi
+
+    log_info "Detected installation mode: ${INSTALL_MODE}"
+    log_info "Installation directory: ${INSTALL_DIR}"
+
+    detect_platform
+
+    # Fetch latest release info
+    log_info "Fetching latest release..."
+    LATEST_VERSION=$(get_latest_version "orqusio/orqus-releases")
+
+    if [ -z "${LATEST_VERSION}" ]; then
+        log_error "Could not fetch latest version"
+        exit 1
+    fi
+
+    log_info "Latest version: ${LATEST_VERSION}"
+    RELEASE_URL="https://github.com/orqusio/orqus-releases/releases/download/${LATEST_VERSION}"
+    DOCKER_TAG="${DOCKER_TAG:-${LATEST_VERSION}}"
+
+    if [ "${INSTALL_MODE}" = "docker" ]; then
+        # ==================== Docker Mode Upgrade ====================
+        log_info "Stopping containers..."
+        cd "${INSTALL_DIR}"
+        docker compose down 2>/dev/null || true
+
+        log_info "Pulling new Docker images..."
+        pull_docker_images
+
+        # Update docker-compose.yml with new image tags
+        log_info "Updating docker-compose.yml..."
+        sed -i.bak "s|${DOCKER_REGISTRY}/orqus-reth:[^[:space:]]*|${DOCKER_REGISTRY}/orqus-reth:${DOCKER_TAG}|g" "${INSTALL_DIR}/docker-compose.yml"
+        sed -i.bak "s|${DOCKER_REGISTRY}/orqusbft:[^[:space:]]*|${DOCKER_REGISTRY}/orqusbft:${DOCKER_TAG}|g" "${INSTALL_DIR}/docker-compose.yml"
+        rm -f "${INSTALL_DIR}/docker-compose.yml.bak"
+
+        log_info "Starting containers with new images..."
+        docker compose up -d
+
+    else
+        # ==================== Binary Mode Upgrade ====================
+        log_info "Stopping services..."
+        "${INSTALL_DIR}/stop.sh" 2>/dev/null || true
+        sleep 2
+
+        # Backup old binaries
+        log_info "Backing up old binaries..."
+        for bin in orqus-reth orqusbft cometbft; do
+            if [ -f "${BIN_DIR}/${bin}" ]; then
+                mv "${BIN_DIR}/${bin}" "${BIN_DIR}/${bin}.bak"
+            fi
+        done
+
+        # Download new binaries
+        log_info "Downloading new binaries..."
+
+        if [ "${OS}" = "linux" ] && [ "${ARCH}" = "amd64" ]; then
+            download_binary "orqus-reth" "${RELEASE_URL}/orqus-reth-linux-amd64"
+            download_binary "orqusbft" "${RELEASE_URL}/orqusbft-linux-amd64"
+        else
+            log_error "Binary upgrade only available for linux-amd64"
+            # Restore backups
+            for bin in orqus-reth orqusbft cometbft; do
+                if [ -f "${BIN_DIR}/${bin}.bak" ]; then
+                    mv "${BIN_DIR}/${bin}.bak" "${BIN_DIR}/${bin}"
+                fi
+            done
+            exit 1
+        fi
+
+        download_cometbft
+
+        # Remove backups after successful download
+        for bin in orqus-reth orqusbft cometbft; do
+            rm -f "${BIN_DIR}/${bin}.bak"
+        done
+
+        log_info "Upgrade complete. Start the chain with:"
+        log_info "  ${INSTALL_DIR}/start.sh"
+    fi
+
+    echo ""
+    echo "╔═══════════════════════════════════════════════════════════╗"
+    echo "║                   Upgrade Complete!                       ║"
+    echo "╚═══════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "Upgraded to version: ${LATEST_VERSION}"
+    echo ""
+    if [ "${INSTALL_MODE}" = "docker" ]; then
+        echo "Containers are now running with the new images."
+        echo "View logs: docker compose -f ${INSTALL_DIR}/docker-compose.yml logs -f"
+    else
+        echo "To start the chain:"
+        echo "  ${INSTALL_DIR}/start.sh"
+    fi
+    echo ""
 }
 
 # Main installation
@@ -972,6 +1110,19 @@ main() {
         generate_docker_stop_script
     fi
 
+    # Copy install script for future upgrades
+    log_info "Saving install script for future upgrades..."
+    SCRIPT_PATH="${BASH_SOURCE[0]}"
+    if [ -f "${SCRIPT_PATH}" ]; then
+        cp "${SCRIPT_PATH}" "${INSTALL_DIR}/install.sh"
+        chmod +x "${INSTALL_DIR}/install.sh"
+    else
+        # Downloaded via curl, fetch again
+        curl -sL -o "${INSTALL_DIR}/install.sh" \
+            "https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh"
+        chmod +x "${INSTALL_DIR}/install.sh"
+    fi
+
     echo ""
     echo "╔═══════════════════════════════════════════════════════════╗"
     echo "║                  Installation Complete!                   ║"
@@ -987,6 +1138,9 @@ main() {
     echo "To stop the chain:"
     echo "  ${INSTALL_DIR}/stop.sh"
     echo ""
+    echo "To upgrade to latest version:"
+    echo "  ${INSTALL_DIR}/install.sh upgrade"
+    echo ""
     if [ "${INSTALL_MODE}" = "binary" ]; then
         echo "To add binaries to PATH:"
         echo "  source ${INSTALL_DIR}/env.sh"
@@ -1001,5 +1155,22 @@ main() {
     fi
 }
 
-# Run main
-main "$@"
+# Parse command
+COMMAND="${1:-install}"
+
+case "${COMMAND}" in
+    upgrade)
+        do_upgrade
+        ;;
+    install|"")
+        main
+        ;;
+    *)
+        echo "Usage: $0 [install|upgrade]"
+        echo ""
+        echo "Commands:"
+        echo "  install   Install Orqus Chain (default)"
+        echo "  upgrade   Upgrade existing installation to latest version"
+        exit 1
+        ;;
+esac
