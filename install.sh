@@ -9,6 +9,10 @@
 #   # Docker mode
 #   INSTALL_MODE=docker curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | bash
 #
+#   # Connect to existing network (testnet/mainnet)
+#   PERSISTENT_PEERS="node_id@sentry1.orqus.io:26656,node_id@sentry2.orqus.io:26656" \
+#     curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | bash
+#
 # This script will:
 # 1. Download binaries OR pull Docker images
 # 2. Generate configuration files
@@ -49,6 +53,12 @@ MONIKER="${ORQUS_MONIKER:-orqus-node}"
 
 # Versions
 COMETBFT_VERSION="${COMETBFT_VERSION:-v0.38.15}"
+
+# P2P configuration
+# Format: "node_id@ip:port,node_id@ip:port"
+# Example: PERSISTENT_PEERS="abc123@sentry-1.orqus.io:26656,def456@sentry-2.orqus.io:26656"
+PERSISTENT_PEERS="${PERSISTENT_PEERS:-}"
+SEEDS="${SEEDS:-}"
 
 # Ports
 RETH_HTTP_PORT="${RETH_HTTP_PORT:-8545}"
@@ -460,6 +470,8 @@ cors_allowed_headers = ["Origin", "Accept", "Content-Type", "X-Requested-With", 
 
 [p2p]
 laddr = "tcp://0.0.0.0:${COMETBFT_P2P_PORT}"
+seeds = "${SEEDS}"
+persistent_peers = "${PERSISTENT_PEERS}"
 max_packet_msg_payload_size = 4096
 pex = true
 seed_mode = false
@@ -897,6 +909,10 @@ main() {
     echo "Chain ID: ${CHAIN_ID}"
     echo "RPC endpoint: http://127.0.0.1:${RETH_HTTP_PORT}"
     echo ""
+    if [ -n "${PERSISTENT_PEERS}" ]; then
+        echo "P2P peers: ${PERSISTENT_PEERS}"
+        echo ""
+    fi
 }
 
 # Run main
