@@ -158,9 +158,18 @@ download_cometbft() {
 pull_docker_images() {
     log_info "Pulling Docker images..."
 
+    # Login to ghcr.io if GITHUB_TOKEN is set (for private repos)
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+        log_info "Logging into ghcr.io..."
+        echo "${GITHUB_TOKEN}" | docker login ghcr.io -u orqusio --password-stdin || {
+            log_warn "Failed to login to ghcr.io, trying without auth..."
+        }
+    fi
+
     log_info "Pulling orqus-reth..."
     docker pull "${DOCKER_REGISTRY}/orqus-reth:${DOCKER_TAG}" || {
         log_error "Failed to pull orqus-reth image"
+        log_error "If the image is private, set GITHUB_TOKEN environment variable"
         exit 1
     }
 
@@ -340,9 +349,18 @@ generate_validator_key_docker() {
     if [ ! -f "${priv_key_file}" ]; then
         log_info "Generating validator key (Docker mode)..."
 
+        # Ensure cometbft directories exist
+        mkdir -p "${DATA_DIR}/cometbft/config" "${DATA_DIR}/cometbft/data"
+
         # Use CometBFT container to generate keys
-        docker run --rm -v "${DATA_DIR}/cometbft:/cometbft" \
-            "cometbft/cometbft:${COMETBFT_VERSION}" init --home /cometbft > /dev/null 2>&1
+        # Run as current user to avoid permission issues
+        docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -v "${DATA_DIR}/cometbft:/cometbft" \
+            "cometbft/cometbft:${COMETBFT_VERSION}" init --home /cometbft || {
+            log_error "Failed to generate validator key"
+            exit 1
+        }
 
         # Extract the generated key
         cp "${DATA_DIR}/cometbft/config/priv_validator_key.json" "${priv_key_file}"
