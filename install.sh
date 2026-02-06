@@ -205,7 +205,8 @@ services:
       - "${RETH_HTTP_PORT}:8545"
       - "${RETH_WS_PORT}:8546"
       - "${RETH_ENGINE_PORT}:8551"
-      - "${RETH_P2P_PORT}:30303"
+      - "${RETH_P2P_PORT}:30303/tcp"
+      - "${RETH_P2P_PORT}:30303/udp"
       - "${RETH_METRICS_PORT}:9001"
     volumes:
       - ${DATA_DIR}/reth:/data
