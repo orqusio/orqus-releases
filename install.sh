@@ -850,6 +850,11 @@ setup_cometbft() {
         echo '{"height":"0","round":0,"step":0}' > "${cometbft_home}/data/priv_validator_state.json"
     fi
 
+    # Set permissions for Docker mode (CometBFT container runs as uid 100)
+    if [ "${INSTALL_MODE}" = "docker" ]; then
+        chmod -R 777 "${cometbft_home}"
+    fi
+
     log_ok "CometBFT setup complete"
 }
 
