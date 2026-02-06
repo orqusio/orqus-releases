@@ -10,13 +10,14 @@
 #   curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | INSTALL_MODE=docker bash
 #
 #   # Connect to existing network (testnet/mainnet)
+#   # Genesis is auto-fetched from first peer when NODE_TYPE != validator
+#   export NODE_TYPE=rpc
 #   export PERSISTENT_PEERS="node_id@sentry1.orqus.io:26656"
 #   export RETH_TRUSTED_PEERS="enode://pubkey@sentry1.orqus.io:30303"
 #   curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | bash
 #
-#   # Or single line:
-#   curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | \
-#     PERSISTENT_PEERS="node_id@ip:26656" RETH_TRUSTED_PEERS="enode://..." bash
+#   # Or specify genesis URL explicitly:
+#   export GENESIS_URL="http://sentry_ip:26657/genesis"
 #
 #   # Upgrade existing installation
 #   ~/.orqus/install.sh upgrade
@@ -80,6 +81,12 @@ SEEDS="${SEEDS:-}"
 # Reth P2P peers - Format: "enode://pubkey@ip:port,enode://pubkey@ip:port"
 # Example: RETH_TRUSTED_PEERS="enode://abc123...@10.0.1.10:30303,enode://def456...@10.0.1.11:30303"
 RETH_TRUSTED_PEERS="${RETH_TRUSTED_PEERS:-}"
+
+# Genesis URL (for joining existing network)
+# If set, genesis will be downloaded from this URL
+# Auto-fetched from first peer if NODE_TYPE != validator and PERSISTENT_PEERS is set
+# Example: GENESIS_URL="http://sentry_ip:26657/genesis"
+GENESIS_URL="${GENESIS_URL:-}"
 
 # Ports
 RETH_HTTP_PORT="${RETH_HTTP_PORT:-8545}"
@@ -439,14 +446,71 @@ get_validator_info() {
                       cat "${priv_key_file}" | grep -o '"value": *"[^"]*"' | head -1 | cut -d'"' -f4)
 }
 
-# Generate CometBFT genesis.json
+# Download or generate CometBFT genesis.json
 generate_cometbft_genesis() {
     local genesis_file="${CONFIG_DIR}/genesis.json"
-    local genesis_time=$(date -u +"%Y-%m-%dT%H:%M:%S.000000000Z")
 
+    # If GENESIS_URL is set, download from existing node
+    if [ -n "${GENESIS_URL}" ]; then
+        log_info "Downloading CometBFT genesis from ${GENESIS_URL}..."
+
+        # Check if it's a CometBFT RPC endpoint (returns JSON with result.genesis)
+        if [[ "${GENESIS_URL}" == *"/genesis"* ]] || [[ "${GENESIS_URL}" == *":26657"* ]]; then
+            # CometBFT RPC format: { "result": { "genesis": {...} } }
+            local tmp_file=$(mktemp)
+            if curl -sL "${GENESIS_URL}" -o "${tmp_file}"; then
+                # Extract genesis from RPC response
+                if python3 -c "import json; d=json.load(open('${tmp_file}')); print(json.dumps(d.get('result',{}).get('genesis',d), indent=2))" > "${genesis_file}" 2>/dev/null; then
+                    rm -f "${tmp_file}"
+                    log_ok "CometBFT genesis downloaded from RPC"
+                    return
+                else
+                    # Maybe it's already a raw genesis file
+                    mv "${tmp_file}" "${genesis_file}"
+                    log_ok "CometBFT genesis downloaded"
+                    return
+                fi
+            fi
+            rm -f "${tmp_file}"
+            log_error "Failed to download genesis from ${GENESIS_URL}"
+            exit 1
+        else
+            # Direct genesis.json URL
+            if curl -sL "${GENESIS_URL}" -o "${genesis_file}"; then
+                log_ok "CometBFT genesis downloaded"
+                return
+            fi
+            log_error "Failed to download genesis from ${GENESIS_URL}"
+            exit 1
+        fi
+    fi
+
+    # If joining existing network (PERSISTENT_PEERS set), try to fetch genesis from first peer
+    if [ -n "${PERSISTENT_PEERS}" ] && [ "${NODE_TYPE}" != "validator" ]; then
+        local first_peer=$(echo "${PERSISTENT_PEERS}" | cut -d',' -f1)
+        local peer_ip=$(echo "${first_peer}" | cut -d'@' -f2 | cut -d':' -f1)
+        local rpc_url="http://${peer_ip}:26657/genesis"
+
+        log_info "Fetching CometBFT genesis from peer ${peer_ip}..."
+        local tmp_file=$(mktemp)
+        if curl -sL --connect-timeout 10 "${rpc_url}" -o "${tmp_file}" 2>/dev/null; then
+            if python3 -c "import json; d=json.load(open('${tmp_file}')); g=d.get('result',{}).get('genesis',d); print(json.dumps(g, indent=2))" > "${genesis_file}" 2>/dev/null; then
+                rm -f "${tmp_file}"
+                # Extract chain_id from downloaded genesis
+                CHAIN_ID=$(python3 -c "import json; print(json.load(open('${genesis_file}'))['chain_id'])" 2>/dev/null || echo "${CHAIN_ID}")
+                log_ok "CometBFT genesis fetched from peer (chain_id: ${CHAIN_ID})"
+                return
+            fi
+        fi
+        rm -f "${tmp_file}"
+        log_warn "Could not fetch genesis from peer, generating new genesis"
+    fi
+
+    # Generate new genesis (for new network or validator)
+    local genesis_time=$(date -u +"%Y-%m-%dT%H:%M:%S.000000000Z")
     get_validator_info
 
-    log_info "Generating CometBFT genesis..."
+    log_info "Generating new CometBFT genesis..."
     cat > "${genesis_file}" << EOF
 {
   "genesis_time": "${genesis_time}",

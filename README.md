@@ -70,16 +70,31 @@ The upgrade process will:
 
 #### Join Existing Network
 
-To connect to an existing Orqus network (testnet/mainnet), specify both CometBFT and Reth peers:
+To connect to an existing Orqus network (testnet/mainnet), you need:
+1. **CometBFT peers** - for consensus layer sync
+2. **Reth peers** - for execution layer sync
+3. **Genesis file** - must match the existing network
+
+The installer will automatically fetch genesis from the first peer if `NODE_TYPE` is not `validator`.
 
 ```bash
 # Get node_id from existing sentry nodes
 # On sentry node: curl -s http://localhost:26657/status | jq -r '.result.node_info.id'
 
-# Install and connect to network (use export for multiple variables)
+# Install and connect to network
+export NODE_TYPE=rpc
+export INSTALL_MODE=docker
 export PERSISTENT_PEERS="<node_id>@<sentry_ip>:26656"
 export RETH_TRUSTED_PEERS="enode://<pubkey>@<sentry_ip>:30303"
 curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | bash
+```
+
+**Explicit genesis download** (if auto-fetch fails):
+```bash
+# Specify genesis URL directly
+export GENESIS_URL="http://<sentry_ip>:26657/genesis"
+# Or use a direct file URL
+export GENESIS_URL="https://example.com/genesis.json"
 ```
 
 Example:
@@ -137,6 +152,10 @@ SEEDS="node_id@seed:26656"
 
 # Reth P2P peers (for execution layer sync)
 RETH_TRUSTED_PEERS="enode://pubkey@ip:30303,enode://pubkey@ip:30303"
+
+# Genesis file (for joining existing network)
+# Auto-fetched from first peer if NODE_TYPE != validator
+GENESIS_URL="http://sentry_ip:26657/genesis"
 
 # Custom ports
 RETH_HTTP_PORT=8545
