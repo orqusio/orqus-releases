@@ -365,8 +365,8 @@ generate_validator_key_docker() {
             exit 1
         }
 
-        # Fix permissions after init
-        chmod -R 755 "${DATA_DIR}/cometbft"
+        # Fix permissions after init (CometBFT runs as uid 100)
+        chmod -R 777 "${DATA_DIR}/cometbft"
 
         # Extract the generated key
         cp "${DATA_DIR}/cometbft/config/priv_validator_key.json" "${priv_key_file}"
