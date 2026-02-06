@@ -222,6 +222,7 @@ services:
       --authrpc.addr 0.0.0.0 --authrpc.port 8551
       --authrpc.jwtsecret /jwt.hex
       --port 30303
+      --nat none
       --metrics 0.0.0.0:9001
       ${RETH_TRUSTED_PEERS:+--trusted-peers ${RETH_TRUSTED_PEERS}}
     healthcheck:
