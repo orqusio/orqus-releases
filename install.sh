@@ -83,10 +83,15 @@ SEEDS="${SEEDS:-}"
 RETH_TRUSTED_PEERS="${RETH_TRUSTED_PEERS:-}"
 
 # Genesis URL (for joining existing network)
-# If set, genesis will be downloaded from this URL
+# If set, CometBFT genesis will be downloaded from this URL
 # Auto-fetched from first peer if NODE_TYPE != validator and PERSISTENT_PEERS is set
 # Example: GENESIS_URL="http://sentry_ip:26657/genesis"
 GENESIS_URL="${GENESIS_URL:-}"
+
+# Reth Genesis URL (for joining existing network)
+# If set, reth genesis will be downloaded from this URL instead of GitHub releases
+# Example: RETH_GENESIS_URL="http://sentry_ip:8888/genesis.json"
+RETH_GENESIS_URL="${RETH_GENESIS_URL:-}"
 
 # Ports
 RETH_HTTP_PORT="${RETH_HTTP_PORT:-8545}"
@@ -724,31 +729,38 @@ EOF
     log_ok "orqusbft config generated"
 }
 
-# Download orqus-reth genesis.json from release
+# Download orqus-reth genesis.json from release or custom URL
 download_reth_genesis() {
     local genesis_file="${CONFIG_DIR}/reth-genesis.json"
 
     if [ -f "${genesis_file}" ]; then
-        log_info "Genesis file already exists, skipping download"
+        log_info "Reth genesis file already exists, skipping download"
         return
     fi
 
-    log_info "Downloading genesis.json..."
-    local genesis_url="${RELEASE_URL}/genesis.json"
+    # Use RETH_GENESIS_URL if set, otherwise fall back to release URL
+    local genesis_url
+    if [ -n "${RETH_GENESIS_URL}" ]; then
+        genesis_url="${RETH_GENESIS_URL}"
+        log_info "Downloading reth genesis from custom URL..."
+    else
+        genesis_url="${RELEASE_URL}/genesis.json"
+        log_info "Downloading reth genesis from release..."
+    fi
 
     if ! curl -sL -o "${genesis_file}" "${genesis_url}"; then
-        log_error "Failed to download genesis.json from ${genesis_url}"
+        log_error "Failed to download reth genesis from ${genesis_url}"
         exit 1
     fi
 
     # Verify it's valid JSON
     if ! python3 -c "import json; json.load(open('${genesis_file}'))" 2>/dev/null; then
-        log_error "Downloaded genesis.json is not valid JSON"
+        log_error "Downloaded reth genesis is not valid JSON"
         rm -f "${genesis_file}"
         exit 1
     fi
 
-    log_ok "Genesis file downloaded"
+    log_ok "Reth genesis downloaded from ${genesis_url}"
 }
 
 # Setup CometBFT data directory

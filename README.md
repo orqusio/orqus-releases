@@ -153,9 +153,13 @@ SEEDS="node_id@seed:26656"
 # Reth P2P peers (for execution layer sync)
 RETH_TRUSTED_PEERS="enode://pubkey@ip:30303,enode://pubkey@ip:30303"
 
-# Genesis file (for joining existing network)
+# CometBFT genesis (for joining existing network)
 # Auto-fetched from first peer if NODE_TYPE != validator
 GENESIS_URL="http://sentry_ip:26657/genesis"
+
+# Reth genesis (for joining existing network)
+# If not set, downloads from GitHub releases
+RETH_GENESIS_URL="http://sentry_ip:8888/genesis.json"
 
 # Custom ports
 RETH_HTTP_PORT=8545
