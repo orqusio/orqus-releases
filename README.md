@@ -44,6 +44,26 @@ INSTALL_MODE=docker curl -sSL https://raw.githubusercontent.com/orqusio/orqus-re
 docker compose -f ~/.orqus/docker-compose.yml logs -f
 ```
 
+#### Join Existing Network
+
+To connect to an existing Orqus network (testnet/mainnet), specify the `PERSISTENT_PEERS`:
+
+```bash
+# Get node_id from existing sentry nodes
+# On sentry node: curl -s http://localhost:26657/status | jq -r '.result.node_info.id'
+
+# Install and connect to network
+PERSISTENT_PEERS="<node_id>@<sentry_ip>:26656,<node_id>@<sentry_ip>:26656" \
+  curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | bash
+```
+
+Example:
+```bash
+PERSISTENT_PEERS="a1b2c3d4e5@10.0.1.10:26656,f6g7h8i9j0@10.0.1.11:26656" \
+  INSTALL_MODE=docker \
+  curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | bash
+```
+
 **Requirements:**
 - Binary mode: Linux amd64
 - Docker mode: Docker + Docker Compose
@@ -66,10 +86,49 @@ INSTALL_MODE=docker
 # Custom Docker image tag
 DOCKER_TAG=v1.0.0
 
+# Node name
+ORQUS_MONIKER=my-node
+
+# Node type (validator, sentry, rpc, archive)
+NODE_TYPE=rpc
+
+# P2P configuration (for joining existing network)
+PERSISTENT_PEERS="node_id@ip:26656,node_id@ip:26656"
+SEEDS="node_id@seed:26656"
+
 # Custom ports
 RETH_HTTP_PORT=8545
 RETH_WS_PORT=8546
+RETH_ENGINE_PORT=8551
+RETH_P2P_PORT=30303
+COMETBFT_P2P_PORT=26656
 COMETBFT_RPC_PORT=26657
+```
+
+### Node Types
+
+| Type | Description | Use Case |
+|------|-------------|----------|
+| `validator` | Full validator with signing keys (default) | Block production |
+| `sentry` | Protects validator, public P2P | Validator protection |
+| `rpc` | Public RPC endpoint | API services |
+| `archive` | Full history node | Historical queries |
+
+**Configuration differences:**
+
+| Setting | validator | sentry | rpc | archive |
+|---------|-----------|--------|-----|---------|
+| pex (peer exchange) | false | true | true | true |
+| slashing | configurable | disabled | disabled | disabled |
+| retainBlocks | all | ~1 day | ~1 day | all |
+
+Example:
+```bash
+# Deploy RPC node
+NODE_TYPE=rpc \
+  PERSISTENT_PEERS="abc@10.0.1.10:26656" \
+  INSTALL_MODE=docker \
+  curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | bash
 ```
 
 ### Manual Download
@@ -339,6 +398,29 @@ openssl rand -hex 32 > jwt.hex
 
 # Start orqus-reth with Engine API
 orqus-reth node --authrpc.addr 0.0.0.0 --authrpc.jwtsecret jwt.hex
+```
+
+### Node not syncing / No peers
+
+1. Check if `PERSISTENT_PEERS` is correctly configured:
+```bash
+# View current config
+cat ~/.orqus/data/cometbft/config/config.toml | grep persistent_peers
+```
+
+2. Verify peer connectivity:
+```bash
+# Check connected peers
+curl -s http://localhost:26657/net_info | jq '.result.n_peers'
+```
+
+3. Ensure firewall allows P2P ports:
+   - CometBFT P2P: `26656/tcp`
+   - Reth P2P: `30303/tcp+udp`
+
+4. Get node_id from a running sentry:
+```bash
+curl -s http://<sentry_ip>:26657/status | jq -r '.result.node_info.id'
 ```
 
 ## Related Repositories

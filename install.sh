@@ -51,6 +51,13 @@ CHAIN_ID="${ORQUS_CHAIN_ID:-153871}"
 CHAIN_NAME="${ORQUS_CHAIN_NAME:-orqus-testnet}"
 MONIKER="${ORQUS_MONIKER:-orqus-node}"
 
+# Node type: validator, sentry, rpc, archive
+# - validator: Full validator with signing keys (default)
+# - sentry: Protects validator, no signing, public P2P
+# - rpc: Public RPC endpoint, no signing
+# - archive: Full history node, no signing
+NODE_TYPE="${NODE_TYPE:-validator}"
+
 # Versions
 COMETBFT_VERSION="${COMETBFT_VERSION:-v0.38.15}"
 
@@ -225,9 +232,29 @@ EOF
 generate_orqusbft_config_docker() {
     local config_file="${CONFIG_DIR}/orqusbft-config.yaml"
 
-    log_info "Generating orqusbft config (Docker mode)..."
+    # Node type specific settings
+    local slashing_enabled="false"
+    local retain_blocks="0"
+
+    case "${NODE_TYPE}" in
+        validator)
+            slashing_enabled="false"
+            retain_blocks="0"
+            ;;
+        sentry|rpc)
+            slashing_enabled="false"
+            retain_blocks="100000"
+            ;;
+        archive)
+            slashing_enabled="false"
+            retain_blocks="0"
+            ;;
+    esac
+
+    log_info "Generating orqusbft config (Docker mode, ${NODE_TYPE})..."
     cat > "${config_file}" << EOF
 # orqusbft Configuration (Docker mode)
+# Node Type: ${NODE_TYPE}
 # See: https://github.com/orqusio/orqus-releases
 
 chainId: ${CHAIN_ID}
@@ -259,12 +286,12 @@ consensus:
   blockPeriod: 1
 
 slashing:
-  enabled: false
+  enabled: ${slashing_enabled}
   missedBlockThreshold: 10
   jailDuration: 1800
 
 storage:
-  retainBlocks: 0
+  retainBlocks: ${retain_blocks}
 
 validatorCommitment:
   enabled: false
@@ -451,9 +478,32 @@ EOF
 generate_cometbft_config() {
     local config_file="${CONFIG_DIR}/cometbft-config.toml"
 
-    log_info "Generating CometBFT config..."
+    # Node type specific settings
+    local pex_enabled="true"
+    local addr_book_strict="true"
+
+    case "${NODE_TYPE}" in
+        validator)
+            # Validator: only connects to sentry, no public peer exchange
+            pex_enabled="false"
+            addr_book_strict="false"
+            ;;
+        sentry)
+            # Sentry: public P2P, peer exchange enabled
+            pex_enabled="true"
+            addr_book_strict="false"
+            ;;
+        rpc|archive)
+            # RPC/Archive: public P2P, peer exchange enabled
+            pex_enabled="true"
+            addr_book_strict="true"
+            ;;
+    esac
+
+    log_info "Generating CometBFT config (${NODE_TYPE})..."
     cat > "${config_file}" << EOF
 # CometBFT Configuration
+# Node Type: ${NODE_TYPE}
 
 proxy_app = "tcp://127.0.0.1:${ORQUSBFT_ABCI_PORT}"
 moniker = "${MONIKER}"
@@ -473,8 +523,9 @@ laddr = "tcp://0.0.0.0:${COMETBFT_P2P_PORT}"
 seeds = "${SEEDS}"
 persistent_peers = "${PERSISTENT_PEERS}"
 max_packet_msg_payload_size = 4096
-pex = true
+pex = ${pex_enabled}
 seed_mode = false
+addr_book_strict = ${addr_book_strict}
 
 [mempool]
 type = "nop"
@@ -508,9 +559,32 @@ EOF
 generate_orqusbft_config() {
     local config_file="${CONFIG_DIR}/orqusbft-config.yaml"
 
-    log_info "Generating orqusbft config..."
+    # Node type specific settings
+    local slashing_enabled="false"
+    local retain_blocks="0"
+
+    case "${NODE_TYPE}" in
+        validator)
+            # Validator: slashing should be enabled in production
+            slashing_enabled="false"  # User should enable manually for production
+            retain_blocks="0"
+            ;;
+        sentry|rpc)
+            # Sentry/RPC: no slashing, keep recent blocks only
+            slashing_enabled="false"
+            retain_blocks="100000"  # ~1 day of blocks
+            ;;
+        archive)
+            # Archive: no slashing, keep all blocks
+            slashing_enabled="false"
+            retain_blocks="0"
+            ;;
+    esac
+
+    log_info "Generating orqusbft config (${NODE_TYPE})..."
     cat > "${config_file}" << EOF
 # orqusbft Configuration
+# Node Type: ${NODE_TYPE}
 # See: https://github.com/orqusio/orqus-releases
 
 chainId: ${CHAIN_ID}
@@ -545,16 +619,16 @@ consensus:
   blockPeriod: 1      # seconds per block (production: 1, testing: 2)
 
 # Slashing configuration
-# - Single node: disabled (no other validators to slash)
-# - Production validator: MUST enable
+# - validator: Enable in production (set enabled: true)
+# - sentry/rpc/archive: Keep disabled
 slashing:
-  enabled: false              # Set to true for production validators
+  enabled: ${slashing_enabled}
   missedBlockThreshold: 10    # Miss 10 blocks -> slash
   jailDuration: 1800          # Jail for 1800 blocks (~30 min)
 
 # Storage settings
 storage:
-  retainBlocks: 0    # 0 = keep all blocks
+  retainBlocks: ${retain_blocks}    # 0 = keep all blocks
 
 # Validator commitment verification (multi-validator only)
 validatorCommitment:
@@ -778,7 +852,18 @@ main() {
         exit 1
     fi
 
+    # Validate node type
+    case "${NODE_TYPE}" in
+        validator|sentry|rpc|archive) ;;
+        *)
+            log_error "Invalid NODE_TYPE: ${NODE_TYPE}"
+            log_error "Valid options: validator, sentry, rpc, archive"
+            exit 1
+            ;;
+    esac
+
     log_info "Installation mode: ${INSTALL_MODE}"
+    log_info "Node type: ${NODE_TYPE}"
 
     detect_platform
 
@@ -893,6 +978,7 @@ main() {
     echo "╚═══════════════════════════════════════════════════════════╝"
     echo ""
     echo "Installation mode: ${INSTALL_MODE}"
+    echo "Node type: ${NODE_TYPE}"
     echo "Installation directory: ${INSTALL_DIR}"
     echo ""
     echo "To start the chain:"
