@@ -222,12 +222,11 @@ services:
       --authrpc.addr 0.0.0.0 --authrpc.port 8551
       --authrpc.jwtsecret /jwt.hex
       --port 30303
-      --nat none
-      --disable-discovery
+      --discovery.port 30303
       --metrics 0.0.0.0:9001
       ${RETH_TRUSTED_PEERS:+--trusted-peers ${RETH_TRUSTED_PEERS}}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8545"]
+      test: ["CMD-SHELL", "cat /proc/net/tcp | grep -q ':2161'"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -356,14 +355,18 @@ generate_validator_key_docker() {
         mkdir -p "${DATA_DIR}/cometbft/config" "${DATA_DIR}/cometbft/data"
 
         # Use CometBFT container to generate keys
-        # Run as current user to avoid permission issues
+        # Set directory permissions first (CometBFT runs as uid 100)
+        chmod 777 "${DATA_DIR}/cometbft" "${DATA_DIR}/cometbft/config" "${DATA_DIR}/cometbft/data"
+
         docker run --rm \
-            --user "$(id -u):$(id -g)" \
             -v "${DATA_DIR}/cometbft:/cometbft" \
             "cometbft/cometbft:${COMETBFT_VERSION}" init --home /cometbft || {
             log_error "Failed to generate validator key"
             exit 1
         }
+
+        # Fix permissions after init
+        chmod -R 755 "${DATA_DIR}/cometbft"
 
         # Extract the generated key
         cp "${DATA_DIR}/cometbft/config/priv_validator_key.json" "${priv_key_file}"
