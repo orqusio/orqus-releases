@@ -223,6 +223,7 @@ services:
       --authrpc.jwtsecret /jwt.hex
       --port 30303
       --nat none
+      --disable-discovery
       --metrics 0.0.0.0:9001
       ${RETH_TRUSTED_PEERS:+--trusted-peers ${RETH_TRUSTED_PEERS}}
     healthcheck:
