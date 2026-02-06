@@ -7,11 +7,16 @@
 #   curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | bash
 #
 #   # Docker mode
-#   INSTALL_MODE=docker curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | bash
+#   curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | INSTALL_MODE=docker bash
 #
 #   # Connect to existing network (testnet/mainnet)
-#   PERSISTENT_PEERS="node_id@sentry1.orqus.io:26656,node_id@sentry2.orqus.io:26656" \
-#     curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | bash
+#   export PERSISTENT_PEERS="node_id@sentry1.orqus.io:26656"
+#   export RETH_TRUSTED_PEERS="enode://pubkey@sentry1.orqus.io:30303"
+#   curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | bash
+#
+#   # Or single line:
+#   curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | \
+#     PERSISTENT_PEERS="node_id@ip:26656" RETH_TRUSTED_PEERS="enode://..." bash
 #
 #   # Upgrade existing installation
 #   ~/.orqus/install.sh upgrade

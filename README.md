@@ -32,7 +32,7 @@ curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.
 
 ```bash
 # Install with Docker
-INSTALL_MODE=docker curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | INSTALL_MODE=docker bash
 
 # Start the chain
 ~/.orqus/start.sh
@@ -76,20 +76,31 @@ To connect to an existing Orqus network (testnet/mainnet), specify both CometBFT
 # Get node_id from existing sentry nodes
 # On sentry node: curl -s http://localhost:26657/status | jq -r '.result.node_info.id'
 
-# Install and connect to network
-PERSISTENT_PEERS="<node_id>@<sentry_ip>:26656" \
-RETH_TRUSTED_PEERS="enode://<pubkey>@<sentry_ip>:30303" \
-  curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | bash
+# Install and connect to network (use export for multiple variables)
+export PERSISTENT_PEERS="<node_id>@<sentry_ip>:26656"
+export RETH_TRUSTED_PEERS="enode://<pubkey>@<sentry_ip>:30303"
+curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | bash
 ```
 
 Example:
 ```bash
-# CometBFT peers (for consensus)
-PERSISTENT_PEERS="a1b2c3d4e5@10.0.1.10:26656,f6g7h8i9j0@10.0.1.11:26656" \
-# Reth peers (for execution layer sync)
-RETH_TRUSTED_PEERS="enode://5a3d42...@10.0.1.10:30303,enode://59949a...@10.0.1.11:30303" \
-  INSTALL_MODE=docker \
-  curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | bash
+# Set environment variables first
+export NODE_TYPE=rpc
+export INSTALL_MODE=docker
+export PERSISTENT_PEERS="a1b2c3d4e5@10.0.1.10:26656,f6g7h8i9j0@10.0.1.11:26656"
+export RETH_TRUSTED_PEERS="enode://5a3d42...@10.0.1.10:30303,enode://59949a...@10.0.1.11:30303"
+
+# Then run installer
+curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | bash
+```
+
+Alternative (single line with pipe to bash):
+```bash
+curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | \
+  NODE_TYPE=rpc INSTALL_MODE=docker \
+  PERSISTENT_PEERS="a1b2c3d4e5@10.0.1.10:26656" \
+  RETH_TRUSTED_PEERS="enode://5a3d42...@10.0.1.10:30303" \
+  bash
 ```
 
 **Requirements:**
@@ -156,10 +167,10 @@ COMETBFT_RPC_PORT=26657
 Example:
 ```bash
 # Deploy RPC node
-NODE_TYPE=rpc \
+curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | \
+  NODE_TYPE=rpc INSTALL_MODE=docker \
   PERSISTENT_PEERS="abc@10.0.1.10:26656" \
-  INSTALL_MODE=docker \
-  curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | bash
+  bash
 ```
 
 ### Manual Download
