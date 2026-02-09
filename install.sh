@@ -9,7 +9,17 @@
 #   # Docker mode
 #   curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | INSTALL_MODE=docker bash
 #
-#   # Connect to existing network (testnet/mainnet)
+#   # Fast sync with snapshot (recommended for RPC/Archive nodes)
+#   export NODE_TYPE=rpc
+#   export SNAPSHOT_BASE_URL="https://snapshots.orqus.io"
+#   export NETWORK="testnet"
+#   export PERSISTENT_PEERS="node_id@sentry1.orqus.io:26656"
+#   curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | bash
+#
+#   # Or specify snapshot URL directly:
+#   export SNAPSHOT_URL="https://snapshots.orqus.io/testnet/orqus-testnet-snapshot-latest.tar.gz"
+#
+#   # Connect to existing network (full sync from genesis)
 #   # Genesis is auto-fetched from first peer when NODE_TYPE != validator
 #   export NODE_TYPE=rpc
 #   export PERSISTENT_PEERS="node_id@sentry1.orqus.io:26656"
@@ -26,9 +36,10 @@
 #
 # This script will:
 # 1. Download binaries OR pull Docker images
-# 2. Generate configuration files
-# 3. Initialize the chain with genesis state
-# 4. Create start/stop scripts
+# 2. Download and restore snapshot (if configured)
+# 3. Generate configuration files
+# 4. Initialize the chain with genesis state (if no snapshot)
+# 5. Create start/stop scripts
 #
 
 set -e
@@ -93,6 +104,16 @@ GENESIS_URL="${GENESIS_URL:-}"
 # Example: RETH_GENESIS_URL="http://sentry_ip:8888/genesis.json"
 RETH_GENESIS_URL="${RETH_GENESIS_URL:-}"
 
+# Snapshot configuration (for fast sync)
+# SNAPSHOT_URL: Direct URL to snapshot tarball
+#   Example: SNAPSHOT_URL="https://snapshots.orqus.io/testnet/orqus-testnet-snapshot-latest.tar.gz"
+# SNAPSHOT_BASE_URL: Base URL for auto-discovery (will append network name)
+#   Example: SNAPSHOT_BASE_URL="https://snapshots.orqus.io"
+#   Auto-constructs: ${SNAPSHOT_BASE_URL}/${NETWORK}/orqus-${NETWORK}-snapshot-latest.tar.gz
+SNAPSHOT_URL="${SNAPSHOT_URL:-}"
+SNAPSHOT_BASE_URL="${SNAPSHOT_BASE_URL:-https://orqus-snapshots.oss-cn-hongkong.aliyuncs.com}"
+NETWORK="${NETWORK:-testnet}"
+
 # Ports
 RETH_HTTP_PORT="${RETH_HTTP_PORT:-8545}"
 RETH_WS_PORT="${RETH_WS_PORT:-8546}"
@@ -152,6 +173,105 @@ download_cometbft() {
     curl -sL "${url}" | tar -xz -C "${BIN_DIR}" cometbft
     chmod +x "${BIN_DIR}/cometbft"
     log_ok "Downloaded CometBFT ${version}"
+}
+
+# Check if snapshot is available
+check_snapshot_available() {
+    local url="$1"
+
+    # Try HEAD request to check if snapshot exists
+    if curl -sI --connect-timeout 10 "${url}" 2>/dev/null | head -1 | grep -q "200"; then
+        return 0
+    fi
+    return 1
+}
+
+# Get snapshot URL (direct URL or auto-discover from base URL)
+get_snapshot_url() {
+    # If direct URL is set, use it
+    if [ -n "${SNAPSHOT_URL}" ]; then
+        echo "${SNAPSHOT_URL}"
+        return
+    fi
+
+    # If base URL is set, construct the URL
+    if [ -n "${SNAPSHOT_BASE_URL}" ]; then
+        echo "${SNAPSHOT_BASE_URL}/${NETWORK}/orqus-${NETWORK}-snapshot-latest.tar.gz"
+        return
+    fi
+
+    # No snapshot configured
+    echo ""
+}
+
+# Download and restore snapshot
+download_snapshot() {
+    local snapshot_url=$(get_snapshot_url)
+
+    if [ -z "${snapshot_url}" ]; then
+        log_info "No snapshot URL configured, will sync from genesis"
+        return 1
+    fi
+
+    log_info "Checking snapshot availability..."
+    if ! check_snapshot_available "${snapshot_url}"; then
+        log_warn "Snapshot not available at ${snapshot_url}, will sync from genesis"
+        return 1
+    fi
+
+    # Get snapshot metadata if available
+    local metadata_url="${snapshot_url}.json"
+    local metadata_file=$(mktemp)
+    if curl -sL --connect-timeout 10 "${metadata_url}" -o "${metadata_file}" 2>/dev/null; then
+        if python3 -c "import json; d=json.load(open('${metadata_file}')); print(f\"  Network: {d.get('network', 'N/A')}\"); print(f\"  Block height: {d.get('block_height', 'N/A')}\"); print(f\"  Timestamp: {d.get('timestamp', 'N/A')}\")" 2>/dev/null; then
+            log_info "Snapshot info:"
+        fi
+    fi
+    rm -f "${metadata_file}"
+
+    # Download snapshot
+    log_info "Downloading snapshot from ${snapshot_url}..."
+    log_info "This may take a while depending on your network speed..."
+
+    local snapshot_file="${DATA_DIR}/snapshot.tar.gz"
+    if ! curl -L --progress-bar -o "${snapshot_file}" "${snapshot_url}"; then
+        log_error "Failed to download snapshot"
+        rm -f "${snapshot_file}"
+        return 1
+    fi
+
+    # Verify checksum if available
+    local checksum_url="${snapshot_url}.sha256"
+    local checksum_file=$(mktemp)
+    if curl -sL --connect-timeout 10 "${checksum_url}" -o "${checksum_file}" 2>/dev/null; then
+        log_info "Verifying snapshot checksum..."
+        local expected_hash=$(cat "${checksum_file}" | awk '{print $1}')
+        local actual_hash=$(sha256sum "${snapshot_file}" | awk '{print $1}')
+        if [ "${expected_hash}" != "${actual_hash}" ]; then
+            log_error "Snapshot checksum mismatch!"
+            log_error "Expected: ${expected_hash}"
+            log_error "Actual:   ${actual_hash}"
+            rm -f "${snapshot_file}" "${checksum_file}"
+            return 1
+        fi
+        log_ok "Checksum verified"
+    fi
+    rm -f "${checksum_file}"
+
+    # Extract snapshot
+    log_info "Extracting snapshot..."
+    if ! tar -xzf "${snapshot_file}" -C "${DATA_DIR}"; then
+        log_error "Failed to extract snapshot"
+        rm -f "${snapshot_file}"
+        return 1
+    fi
+
+    rm -f "${snapshot_file}"
+    log_ok "Snapshot restored successfully"
+
+    # Mark that we used a snapshot (skip init steps)
+    SNAPSHOT_RESTORED=true
+    return 0
 }
 
 # Pull Docker images
@@ -1191,6 +1311,10 @@ main() {
     RELEASE_URL="https://github.com/orqusio/orqus-releases/releases/download/${LATEST_VERSION}"
     DOCKER_TAG="${DOCKER_TAG:-${LATEST_VERSION}}"
 
+    # Try to restore from snapshot first
+    SNAPSHOT_RESTORED=false
+    download_snapshot || true
+
     if [ "${INSTALL_MODE}" = "binary" ]; then
         # ==================== Binary Mode ====================
         # Download orqus-reth (currently only linux-amd64 available)
@@ -1236,8 +1360,18 @@ main() {
         generate_reth_config
 
         # Setup components
-        setup_cometbft
-        init_reth
+        if [ "${SNAPSHOT_RESTORED}" = "true" ]; then
+            log_info "Snapshot restored, skipping data initialization"
+            # Only copy config files, data is already restored
+            mkdir -p "${DATA_DIR}/cometbft/config"
+            cp "${CONFIG_DIR}/genesis.json" "${DATA_DIR}/cometbft/config/genesis.json"
+            cp "${CONFIG_DIR}/cometbft-config.toml" "${DATA_DIR}/cometbft/config/config.toml"
+            # Note: priv_validator_key.json and node_key.json should be from snapshot
+            # or user needs to provide their own for validators
+        else
+            setup_cometbft
+            init_reth
+        fi
 
         # Generate scripts
         generate_env_file
@@ -1259,7 +1393,16 @@ main() {
         generate_reth_config
 
         # Setup CometBFT data directory
-        setup_cometbft
+        if [ "${SNAPSHOT_RESTORED}" = "true" ]; then
+            log_info "Snapshot restored, skipping data initialization"
+            # Only copy config files
+            mkdir -p "${DATA_DIR}/cometbft/config"
+            cp "${CONFIG_DIR}/genesis.json" "${DATA_DIR}/cometbft/config/genesis.json"
+            cp "${CONFIG_DIR}/cometbft-config.toml" "${DATA_DIR}/cometbft/config/config.toml"
+            chmod -R 777 "${DATA_DIR}/cometbft"
+        else
+            setup_cometbft
+        fi
 
         # Generate Docker files
         generate_docker_compose
@@ -1289,6 +1432,11 @@ main() {
     echo "Installation mode: ${INSTALL_MODE}"
     echo "Node type: ${NODE_TYPE}"
     echo "Installation directory: ${INSTALL_DIR}"
+    if [ "${SNAPSHOT_RESTORED}" = "true" ]; then
+        echo "Data source: Snapshot (fast sync)"
+    else
+        echo "Data source: Genesis (full sync)"
+    fi
     echo ""
     echo "To start the chain:"
     echo "  ${INSTALL_DIR}/start.sh"
