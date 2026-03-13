@@ -1,0 +1,9 @@
+{
+  "cometbft": {
+    "persistent_peers": "",
+    "seeds": ""
+  },
+  "reth": {
+    "trusted_peers": ""
+  }
+}
