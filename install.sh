@@ -445,13 +445,28 @@ generate_signing_key() {
         python3 -c "
 import os, sys
 seed = os.urandom(32)
-print('0x' + seed.hex())
+print(seed.hex())
 " > "${signing_key_file}"
         chmod 600 "${signing_key_file}"
         log_ok "Signing key generated"
     else
         log_info "Signing key already exists"
     fi
+
+    # Normalize/validate signing key format for orqus-reth:
+    # must be plain 64-hex (no 0x prefix, no extra whitespace).
+    python3 - <<'PY' "${signing_key_file}"
+import re, sys, pathlib
+p = pathlib.Path(sys.argv[1])
+s = p.read_text(encoding="utf-8").strip()
+if s.startswith("0x") or s.startswith("0X"):
+    s = s[2:]
+if not re.fullmatch(r"[0-9a-fA-F]{64}", s):
+    print(f"invalid signing.key format in {p}: expected 64 hex chars", file=sys.stderr)
+    sys.exit(1)
+p.write_text(s + "\n", encoding="utf-8")
+PY
+    log_ok "Signing key normalized (plain 64-hex)"
 }
 
 # Generate enode key (secp256k1 private key for devp2p)
