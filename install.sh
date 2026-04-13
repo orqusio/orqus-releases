@@ -81,7 +81,7 @@ _USER_FOLLOW_URL="${FOLLOW_URL:-}"
 DOCKER_REGISTRY="${DOCKER_REGISTRY:-ghcr.io/orqusio}"
 
 # Chain parameters
-CHAIN_ID="${ORQUS_CHAIN_ID:-888888}"
+CHAIN_ID="${ORQUS_CHAIN_ID:-153871}"
 MONIKER="${ORQUS_MONIKER:-orqus-node}"
 
 # GitHub repository for releases and peer discovery
