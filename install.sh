@@ -18,6 +18,9 @@
 #   # Join as RPC node with snapshot (recommended)
 #   curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | NODE_TYPE=rpc NETWORK=testnet bash
 #
+#   # Join as RPC follower (explicit follow source)
+#   curl -sSL https://raw.githubusercontent.com/orqusio/orqus-releases/main/install.sh | NODE_TYPE=rpc FOLLOW_URL=ws://10.100.82.145:8546 NETWORK=testnet bash
+#
 #   # Override peers manually (skips auto-fetch)
 #   export BOOTSTRAP_PEERS="/dns4/node1.orqus.io/tcp/26600/p2p/PUBKEY"
 #   export RETH_TRUSTED_PEERS="enode://pubkey@sentry1.orqus.io:30303"
@@ -72,6 +75,7 @@ _USER_RETH_TXPOOL_MAX_ACCOUNT_SLOTS="${RETH_TXPOOL_MAX_ACCOUNT_SLOTS:-}"
 _USER_RETH_TXPOOL_MAX_PENDING_TXNS="${RETH_TXPOOL_MAX_PENDING_TXNS:-}"
 _USER_RETH_TXPOOL_MAX_NEW_TXNS="${RETH_TXPOOL_MAX_NEW_TXNS:-}"
 _USER_LOG_LEVEL="${LOG_LEVEL:-}"
+_USER_FOLLOW_URL="${FOLLOW_URL:-}"
 
 # Docker image registry
 DOCKER_REGISTRY="${DOCKER_REGISTRY:-ghcr.io/orqusio}"
@@ -91,6 +95,10 @@ BOOTSTRAP_PEERS="${BOOTSTRAP_PEERS:-}"
 
 # Reth P2P peers - Format: "enode://pubkey@ip:port,enode://pubkey@ip:port"
 RETH_TRUSTED_PEERS="${RETH_TRUSTED_PEERS:-}"
+
+# Optional RPC follower source (recommended for NODE_TYPE=rpc)
+# Example: ws://10.100.82.145:8546
+FOLLOW_URL="${FOLLOW_URL:-}"
 
 # Peers URL: auto-constructed from GitHub raw URL based on NETWORK
 PEERS_URL="${PEERS_URL:-}"
@@ -271,6 +279,15 @@ fetch_peers() {
         if [ -n "${reth_peers}" ]; then
             RETH_TRUSTED_PEERS="${reth_peers}"
             log_ok "Auto-discovered Reth peers: ${RETH_TRUSTED_PEERS}"
+        fi
+    fi
+
+    if [ -z "${FOLLOW_URL}" ]; then
+        local follow_url
+        follow_url=$(echo "${peers_json}" | grep '"follow_url"' | sed -E 's/.*"follow_url"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/')
+        if [ -n "${follow_url}" ]; then
+            FOLLOW_URL="${follow_url}"
+            log_ok "Auto-discovered follow URL: ${FOLLOW_URL}"
         fi
     fi
 }
@@ -646,11 +663,18 @@ generate_docker_compose() {
 
     # Build consensus args
     local consensus_args=""
-    consensus_args="--consensus.signing-key /config/signing.key"
-    consensus_args="${consensus_args} --consensus.fee-recipient ${FEE_RECIPIENT}"
-    consensus_args="${consensus_args} --consensus.listen-address 0.0.0.0:26600"
-    consensus_args="${consensus_args} --consensus.metrics-address 0.0.0.0:26700"
-    consensus_args="${consensus_args} --consensus.allow-private-ips"
+    local follow_arg=""
+    if [ "${NODE_TYPE}" = "validator" ]; then
+        consensus_args="--consensus.signing-key /config/signing.key"
+        consensus_args="${consensus_args} --consensus.fee-recipient ${FEE_RECIPIENT}"
+        consensus_args="${consensus_args} --consensus.listen-address 0.0.0.0:26600"
+        consensus_args="${consensus_args} --consensus.metrics-address 0.0.0.0:26700"
+        consensus_args="${consensus_args} --consensus.allow-private-ips"
+    else
+        if [ -n "${FOLLOW_URL}" ]; then
+            follow_arg="--follow ${FOLLOW_URL}"
+        fi
+    fi
 
     local bootstrap_arg=""
     if [ -n "${BOOTSTRAP_PEERS}" ]; then
@@ -708,6 +732,7 @@ services:
       ${consensus_args}
       ${bootstrap_arg}
       ${trusted_peers_arg}
+      ${follow_arg}
     environment:
       - RUST_LOG=${LOG_LEVEL}
     healthcheck:
@@ -888,15 +913,25 @@ source "${INSTALL_DIR}/env.sh"
 cmd_start() {
     mkdir -p "${DATA_DIR}/logs"
 
-    # Build consensus arguments
-    CONSENSUS_ARGS="--consensus.signing-key ${CONFIG_DIR}/signing.key"
-    CONSENSUS_ARGS="${CONSENSUS_ARGS} --consensus.fee-recipient ${FEE_RECIPIENT}"
-    CONSENSUS_ARGS="${CONSENSUS_ARGS} --consensus.listen-address 0.0.0.0:${CONSENSUS_PORT}"
-    CONSENSUS_ARGS="${CONSENSUS_ARGS} --consensus.metrics-address 0.0.0.0:${CONSENSUS_METRICS_PORT}"
-    CONSENSUS_ARGS="${CONSENSUS_ARGS} --consensus.allow-private-ips"
-
-    if [ -n "${BOOTSTRAP_PEERS}" ]; then
-        CONSENSUS_ARGS="${CONSENSUS_ARGS} --consensus.bootstrap-peers ${BOOTSTRAP_PEERS}"
+    CONSENSUS_ARGS=""
+    FOLLOW_ARG=""
+    if [ "${NODE_TYPE}" = "validator" ]; then
+        # Build validator consensus arguments
+        CONSENSUS_ARGS="--consensus.signing-key ${CONFIG_DIR}/signing.key"
+        CONSENSUS_ARGS="${CONSENSUS_ARGS} --consensus.fee-recipient ${FEE_RECIPIENT}"
+        CONSENSUS_ARGS="${CONSENSUS_ARGS} --consensus.listen-address 0.0.0.0:${CONSENSUS_PORT}"
+        CONSENSUS_ARGS="${CONSENSUS_ARGS} --consensus.metrics-address 0.0.0.0:${CONSENSUS_METRICS_PORT}"
+        CONSENSUS_ARGS="${CONSENSUS_ARGS} --consensus.allow-private-ips"
+        if [ -n "${BOOTSTRAP_PEERS}" ]; then
+            CONSENSUS_ARGS="${CONSENSUS_ARGS} --consensus.bootstrap-peers ${BOOTSTRAP_PEERS}"
+        fi
+    else
+        # RPC follower mode
+        if [ -n "${FOLLOW_URL}" ]; then
+            FOLLOW_ARG="--follow ${FOLLOW_URL}"
+        else
+            echo "WARN: NODE_TYPE=rpc but FOLLOW_URL is empty. Node will not actively follow a source."
+        fi
     fi
 
     TRUSTED_PEERS_ARG=""
@@ -925,6 +960,7 @@ cmd_start() {
         --txpool.max-new-txns ${RETH_TXPOOL_MAX_NEW_TXNS} \
         ${CONSENSUS_ARGS} \
         ${TRUSTED_PEERS_ARG} \
+        ${FOLLOW_ARG} \
         >> "${DATA_DIR}/logs/orqus-reth.log" 2>&1 &
     local pid=$!
     echo "  PID: ${pid}"
@@ -1096,6 +1132,7 @@ export BOOTSTRAP_PEERS="${BOOTSTRAP_PEERS}"
 
 # Reth P2P peers
 export RETH_TRUSTED_PEERS="${RETH_TRUSTED_PEERS}"
+export FOLLOW_URL="${FOLLOW_URL}"
 
 # Ports
 export RETH_HTTP_PORT="${RETH_HTTP_PORT}"
@@ -1185,6 +1222,7 @@ do_reconfigure() {
     [ -n "${_USER_RETH_TXPOOL_MAX_PENDING_TXNS}" ]  && RETH_TXPOOL_MAX_PENDING_TXNS="${_USER_RETH_TXPOOL_MAX_PENDING_TXNS}"
     [ -n "${_USER_RETH_TXPOOL_MAX_NEW_TXNS}" ]      && RETH_TXPOOL_MAX_NEW_TXNS="${_USER_RETH_TXPOOL_MAX_NEW_TXNS}"
     [ -n "${_USER_LOG_LEVEL}" ]                     && LOG_LEVEL="${_USER_LOG_LEVEL}"
+    [ -n "${_USER_FOLLOW_URL}" ]                    && FOLLOW_URL="${_USER_FOLLOW_URL}"
 
     # Auto-derive RETH_BUILDER_GAS_LIMIT from GENESIS_GAS_LIMIT
     if [ -n "${GENESIS_GAS_LIMIT}" ] && [ -z "${_USER_RETH_BUILDER_GAS_LIMIT}" ]; then
@@ -1197,6 +1235,7 @@ do_reconfigure() {
     log_info "  Fee recipient:     ${FEE_RECIPIENT}"
     log_info "  Bootstrap peers:   ${BOOTSTRAP_PEERS:-<none>}"
     log_info "  Reth peers:        ${RETH_TRUSTED_PEERS:-<none>}"
+    log_info "  Follow URL:        ${FOLLOW_URL:-<none>}"
     log_info "  Network:           ${NETWORK}"
     if [ -n "${_USER_PROFILE}" ]; then
         log_info "  Profile:           ${_USER_PROFILE}"
@@ -1427,6 +1466,9 @@ main() {
 
     log_info "Installation mode: ${INSTALL_MODE}"
     log_info "Node type: ${NODE_TYPE}"
+    if [ "${NODE_TYPE}" = "rpc" ] && [ -z "${FOLLOW_URL}" ]; then
+        log_warn "NODE_TYPE=rpc but FOLLOW_URL is empty (recommended to set FOLLOW_URL=ws://<source>:8546)"
+    fi
     log_info "Network: ${NETWORK}"
     log_info "Chain ID: ${CHAIN_ID}"
 
