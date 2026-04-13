@@ -463,13 +463,13 @@ generate_enode_key() {
         # openssl ecparam generates a valid secp256k1 private key
         # reth expects a raw 32-byte hex file
         python3 -c "
-import os, hashlib
+import os, sys
 while True:
     key = os.urandom(32)
     # secp256k1 order
     n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
     if 0 < int.from_bytes(key, 'big') < n:
-        print(key.hex())
+        sys.stdout.write(key.hex())
         break
 " > "${enode_key_file}"
         chmod 600 "${enode_key_file}"
